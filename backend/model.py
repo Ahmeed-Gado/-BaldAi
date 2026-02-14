@@ -1,81 +1,83 @@
 """
-BaldGuard AI — Model Module
-
-PLACEHOLDER LOGIC
-Replace this with your real PyTorch / TensorFlow / NVIDIA inference pipeline.
-
-Architecture-ready for:
-- PyTorch CNN (Transfer Learning)
-- TorchServe
-- NVIDIA Triton Inference Server
-- TensorRT optimized models
-- Custom CUDA pipelines
+BaldGuard AI — OpenAI Vision Module
+Uses GPT-4o-mini to analyze scalp images for hair density and health.
 """
 
-import random
-import numpy as np
+import base64
+import io
+import json
+import os
 from PIL import Image
+from openai import OpenAI
+from dotenv import load_dotenv
 
+# Load API key from .env
+load_dotenv()
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def analyze_hair(img: Image.Image) -> dict:
     """
-    Analyze a scalp image for hair thinning indicators.
+    Sends the image to OpenAI GPT-4o-mini for visual analysis.
+    """
+    
+    # Check if API Key exists
+    if not os.getenv("OPENAI_API_KEY"):
+        return {
+            "score": 0,
+            "zone": "Red",
+            "confidence": 0.0,
+            "summary": "API Key Missing",
+            "findings": ["OpenAI API Key not found in backend/.env file."]
+        }
 
-    Args:
-        img: PIL Image (RGB)
+    # 1. Convert PIL Image to Base64
+    buffered = io.BytesIO()
+    img.save(buffered, format="JPEG")
+    img_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-    Returns:
-        Dictionary with score, zone, confidence, summary, and findings.
-
-    TODO: Replace with real inference:
-        1. Preprocess image (resize, normalize, tensor conversion)
-        2. Run through CNN model (e.g., ResNet50 fine-tuned on dermatological data)
-        3. Post-process predictions
-        4. Generate Grad-CAM heatmap (optional)
+    # 2. Construct the Prompt
+    system_prompt = """
+    You are a dermatological AI assistant specialized in hair density analysis.
+    Analyze the provided scalp image and return a JSON object with:
+    - score: integer (0-100, where 100 is perfect density)
+    - zone: string ("Green", "Yellow", or "Red")
+    - confidence: float (0.00-1.00)
+    - summary: string (1 sentence overview)
+    - findings: list of strings (3 bullet points)
+    
+    Strictly output ONLY valid JSON.
     """
 
-    # --- Placeholder: Simulate AI analysis based on image properties ---
-    # In production, this would be your model forward pass
+    user_prompt = "Analyze this scalp image for hair thinning and density."
 
-    # Use image statistics as a simple proxy
-    img_resized = img.resize((224, 224))
-    arr = np.array(img_resized, dtype=np.float32) / 255.0
+    try:
+        # 3. Call OpenAI API
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": [
+                    {"type": "text", "text": user_prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
+                ]}
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=300
+        )
 
-    # Basic image features (brightness, contrast variance)
-    brightness = float(arr.mean())
-    variance = float(arr.var())
+        # 4. Parse Response
+        content = response.choices[0].message.content
+        result = json.loads(content)
+        
+        return result
 
-    # Simulate a score influenced by image properties
-    base_score = int(55 + brightness * 30 + variance * 20)
-    score = max(30, min(95, base_score + random.randint(-5, 5)))
-
-    # Zone classification
-    if score >= 80:
-        zone = "Green"
-        summary = "Hair density appears healthy. No significant thinning markers detected."
-    elif score >= 65:
-        zone = "Yellow"
-        summary = "Mild thinning detected near crown region. Early prevention recommended."
-    else:
-        zone = "Red"
-        summary = "Active thinning patterns detected. Professional consultation recommended."
-
-    # Confidence (simulated)
-    confidence = round(0.82 + random.uniform(0, 0.15), 2)
-
-    # Findings
-    findings = [
-        f"Overall density score: {score}/100",
-        f"Scalp visibility: {'low' if score >= 75 else 'moderate' if score >= 60 else 'high'}",
-        f"Pattern consistency: {'uniform' if score >= 70 else 'irregular'}",
-        f"Crown area assessment: {zone.lower()} zone",
-        f"Image quality: {'good' if brightness > 0.3 else 'review lighting'}",
-    ]
-
-    return {
-        "score": score,
-        "zone": zone,
-        "confidence": confidence,
-        "summary": summary,
-        "findings": findings,
-    }
+    except Exception as e:
+        print(f"OpenAI Error: {e}")
+        return {
+            "score": 50,
+            "zone": "Red",
+            "confidence": 0.5,
+            "summary": "AI Error",
+            "findings": [f"Error processing image: {str(e)}"]
+        }

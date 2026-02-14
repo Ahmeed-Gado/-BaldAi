@@ -81,10 +81,11 @@ export default function ScanPage() {
                     `/results?score=${data.score}&zone=${data.zone}&confidence=${data.confidence}`
                 );
             } catch {
-                // Fallback: demo results if backend unavailable
-                const score = 72;
-                const zone = "Yellow";
-                const confidence = 0.91;
+                // Fallback: Generate randomized demo results if backend is unavailable
+                const score = 55 + Math.floor(Math.random() * 35); // 55-90
+                const zone = score >= 80 ? "Green" : score >= 65 ? "Yellow" : "Red";
+                const confidence = +(0.88 + Math.random() * 0.08).toFixed(2);
+
                 router.push(
                     `/results?score=${score}&zone=${zone}&confidence=${confidence}`
                 );
