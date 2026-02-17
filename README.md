@@ -45,7 +45,7 @@
 cd baldguard-ai
 npm install
 npm run dev
-# → http://localhost:3000
+https://early-baldness-detector.web.app/
 ```
 
 ### Backend (FastAPI) — Optional
