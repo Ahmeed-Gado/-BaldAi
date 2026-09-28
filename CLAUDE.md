@@ -12,89 +12,97 @@ Results page shows a gauge, findings and a scripted (non-AI) "Demo Chat". Inform
   `next.config.ts` sets `output: 'export'` (static site into `out/`), deployed to Firebase Hosting
   (`firebase.json` → `out`, project `early-baldness-detector` in `.firebaserc`).
   - `src/app/page.tsx` landing; `src/app/scan/page.tsx` upload + scan; `src/app/results/page.tsx` results
-  - `src/app/api/analyze/route.ts` Next API proxy (see Open questions, likely unused)
+  - `src/app/api/analyze/route.ts` Next API proxy. Builds, but is **not** in `out/`, so it does not exist on
+    Firebase Hosting; only runs under `npm run dev`/`npm run start`. Nothing calls it (see Open questions).
   - `src/components/*` UI; `src/app/globals.css` design tokens/animations
-- **Backend** (`backend/`): FastAPI + Pillow + `openai` + `python-dotenv`. `main.py` (routes),
-  `model.py` (`analyze_hair(img)` → OpenAI call), `requirements.txt` (unpinned), `Dockerfile`
-  (python:3.11-slim, uvicorn on port 8080).
+- **Backend** (`backend/`): FastAPI + Pillow + `openai` + `python-dotenv`. `main.py` (routes, upload validation),
+  `model.py` (`analyze_hair(img)` → OpenAI call, raises `AnalysisError`), `requirements.txt` (unpinned),
+  `requirements-dev.txt` (+ pytest, httpx), `tests/` (pytest), `Dockerfile` (python:3.11-slim, uvicorn on 8080).
 - **How they talk**
   - `scan/page.tsx` POSTs `multipart/form-data` field `image` **directly** to
     `NEXT_PUBLIC_AI_BACKEND_URL` (default `http://localhost:8000/analyze`).
-  - Backend routes: `GET /health` → `{status, model}`; `POST /analyze` (field `image`) →
-    `{score, zone, confidence, summary, findings[]}`.
-  - Scan page then navigates to `/results?score=&zone=&confidence=` (numbers/strings only, never image data).
+  - `GET /health` → `{status, model}`. `POST /analyze` → 200 `{score, zone, confidence, summary, findings[]}`,
+    or `{"error": "<generic message>"}` with 400 (not a valid JPG/PNG), 411 (no Content-Length),
+    413 (> 10 MB), 415 (wrong type), 422 (no `image` field), 502 (OpenAI failed / bad reply), 503 (no API key).
+  - On 200 with a valid shape, scan page navigates to `/results?score=&zone=&confidence=` (never image data).
+    On any failure it shows an error with "Try again" and does not navigate.
   - Env vars: `OPENAI_API_KEY` (backend, via `backend/.env`), `NEXT_PUBLIC_AI_BACKEND_URL` (frontend, public),
     `AI_BACKEND_URL` (used only by `route.ts`).
 
 ## 3. Commands
 Frontend (from repo root, from `package.json`):
-- Install: `npm install`
-- Dev: `npm run dev`
-- Build: `npm run build` (static export → `out/`)
-- Start: `npm run start`
-- Lint: `npm run lint` (ESLint 9, `eslint-config-next` core-web-vitals + typescript)
-- Test: **none configured.** No test script, no test framework.
+- Install: `npm install` (or `npm ci`)
+- Dev: `npm run dev` · Build: `npm run build` (static export → `out/`) · Start: `npm run start`
+- Lint: `npm run lint` (ESLint 9, `eslint-config-next`). Must have 0 errors; 7 `<img>`/font warnings pre-exist.
+- Typecheck: `npx tsc --noEmit`
+- Test: **no frontend test framework.** Use the manual checklist in Section 5.
 
-Backend (from `backend/`, from README + Dockerfile):
-- Install: `pip install -r requirements.txt`
+Backend (from `backend/`):
+- Install: `python -m venv .venv`, then `.venv/Scripts/python -m pip install -r requirements-dev.txt`
+  (Windows path; `.venv/bin/python` elsewhere). `.venv` is gitignored.
 - Dev: `uvicorn main:app --reload --port 8000`
+- Test: `.venv/Scripts/python -m pytest` (config in `backend/pytest.ini`; tests never call real OpenAI)
 - Container: Dockerfile runs `uvicorn main:app --host 0.0.0.0 --port 8080`
-- Lint/test: **none configured.** No pytest, ruff, black or mypy config exists.
+- Lint/format: none configured.
 
 ## 4. Hard rules (non-negotiable)
 **Privacy — images never persist.**
-- Uploaded images live in memory only (`await image.read()` → `io.BytesIO` → PIL → base64 → OpenAI), then are discarded.
+- Uploaded images live in memory only (`image.read()` → `io.BytesIO` → PIL → base64 → OpenAI), then are discarded.
 - Forbidden: writing image bytes/base64 to disk, temp files, DB, cache, cloud storage, logs, error messages,
-  analytics, URLs/query strings, `localStorage`/`sessionStorage`/IndexedDB. No `img.save(<path>)`, no `tempfile`,
-  no `UploadFile` spooling to disk beyond what FastAPI does internally.
-- Frontend preview uses `URL.createObjectURL` + `revokeObjectURL`; keep it that way.
+  analytics, URLs/query strings, `localStorage`/`sessionStorage`/IndexedDB. No `img.save(<path>)`, no `tempfile`.
+- Starlette spools uploads > 1 MB to disk by default. `main.py` prevents this with
+  `MultiPartParser.spool_max_size = MAX_REQUEST_BYTES` plus the Content-Length cap middleware. Never remove either;
+  `test_large_upload_never_rolls_over_to_disk` guards it.
+- Frontend preview uses `URL.createObjectURL` (in `handlePick`) + `revokeObjectURL` (effect cleanup); keep it.
 - Any change that could persist an image is rejected, even for debugging.
 
 **Secrets.**
 - `OPENAI_API_KEY` lives only in backend env (`backend/.env` locally, env vars in deploy). Never in frontend code,
   never in any `NEXT_PUBLIC_*` var (those ship to the browser), never in responses, never logged, never committed.
+- The OpenAI client is created per request in `model._get_client()`; do not move it back to import time.
 - `.env`, `.env.local`, `*.env` stay in `.gitignore`. Do not weaken those entries.
 
 **Upload validation on the backend.**
-- `/analyze` must reject non-JPEG/PNG and files > 10 MB (matching frontend limits) with a 4xx and a generic
-  message, before calling PIL or OpenAI. Frontend checks (`UploadCard.tsx`, `route.ts`) are UX only.
-- Currently NOT enforced in `backend/main.py` — fixing this is a priority.
+- `/analyze` rejects non-JPEG/PNG (declared type **and** real PIL format) and files > 10 MB with a 4xx before
+  OpenAI is called. `Image.open` stays inside try/except (`load_image`). Frontend checks are UX only.
 
 **Error handling.**
-- Never return stack traces, API keys, raw exception text or raw OpenAI errors to the client.
-  Return a generic message + status code; log a sanitized error server-side (no image data, no key).
-- Currently violated: `model.py` puts `str(e)` in `findings` and `print`s the raw OpenAI error;
-  `main.py` has no try/except around `Image.open`. Do not copy these patterns.
+- Never return stack traces, API keys, `str(e)` or raw OpenAI errors to the client. Backend returns
+  `{"error": ...}` with fixed strings; frontend shows fixed client-side strings, never server text.
+- Log with `logging` and the **exception type only** (`type(e).__name__`). No `print`, no `exc_info`,
+  no exception message, no image data.
+
+**Never show a result the analysis did not produce.**
+- No demo/random/fallback scores anywhere. On failure show an error state with retry.
+- Values read from the URL (`?zone=` etc.) are untrusted: allowlist them. No `dangerouslySetInnerHTML`.
 
 ## 5. Workflow rules for Claude
 - Before editing: state the plan and the exact files you will touch. Wait if the change touches Section 4.
 - Small steps: one feature or fix per step. No drive-by refactors.
-- Every change needs a test. No test setup exists yet, so until one is added provide a manual test checklist.
-  For every "allowed" case also test the "rejected" case, at minimum:
-  - valid JPG and PNG → 200 with `{score, zone, confidence, summary, findings}`
-  - wrong type (e.g. `.gif`, `.txt` renamed `.jpg`) → 4xx, generic message
-  - file > 10 MB → 4xx, generic message
-  - missing `image` field → 4xx
-  - `OPENAI_API_KEY` unset → safe generic error, no key text leaked
-  - OpenAI failure → generic error, no raw error in response
-  - after each: confirm no new files on disk and no image data in logs
+- Every change needs a test. Backend: add pytest cases in `backend/tests/`. Frontend: manual checklist.
+  For every "allowed" case also test the "rejected" case. Backend minimum (all covered by current tests):
+  valid JPG/PNG → 200; wrong type, disguised/corrupt/truncated image, > 10 MB, missing field → 4xx;
+  missing key → 503; OpenAI error or bad reply → 502; no raw error text or key in response or logs.
+- Frontend manual checklist (run with `npm run dev`):
+  - backend down → "Analysis failed, please try again." + "Try again" button, no navigation, no scores
+  - `/results?zone=<script>alert(1)</script>` → page renders, no alert, greeting says "Yellow zone"
+  - `/results?zone=Purple` → falls back to Yellow; `?zone=Red` → Red
 - Never mark a task done until it has been tested (run it, or walk the checklist and report results).
-- Run `npm run lint` and `npm run build` after frontend changes.
+- Run `npm run lint`, `npx tsc --noEmit` and `npm run build` after frontend changes; pytest after backend changes.
 - If a rule here changes, update this file in the same step.
 
 ## 6. Coding conventions (as the code does today)
-- TypeScript strict; import via `@/*` alias (→ `src/*`).
+- TypeScript strict; import via `@/*` alias (→ `src/*`). Use `unknown` + type guards for fetched JSON.
 - Components: one per file in `src/components/`, PascalCase filename, `export default function Name`.
   Hooks: `useX.ts`, named export (`useRevealOnScroll`).
-- Props typed with a local `type Props = { ... }` or inline object type. Zone type is
-  `"Green" | "Yellow" | "Red"` (currently duplicated in `results/page.tsx`, `Findings.tsx`, `ChatPanel.tsx`).
-- Client components start with `"use client";`.
+- Props typed with a local `type Props = { ... }` or inline object type. Zone type `"Green" | "Yellow" | "Red"`
+  is duplicated in `results/page.tsx`, `scan/page.tsx`, `Findings.tsx`, `ChatPanel.tsx`.
+- Client components start with `"use client";`. Don't call setState synchronously in effects (lint error).
 - Styling: Tailwind utility classes + custom classes from `globals.css` (`glass`, `btn-primary`, `btn-glass`,
   `animate-*`). Icons: Material Symbols (`<span className="material-symbols-outlined">`).
 - Formatting: double quotes, semicolons. Indent is mixed (4 spaces in `src/app/scan`, `results`, `api`,
   most components; 2 spaces in `layout.tsx`, `page.tsx`). Match the file you edit. No Prettier config.
-- Python: snake_case, module docstrings, type hints on public functions (`analyze_hair(img: Image.Image) -> dict`).
-  No formatter configured.
+- Python: snake_case, module docstrings, type hints on functions, `logger = logging.getLogger(__name__)`.
 
 ## 7. Definition of done
 - [ ] Plan + files stated before editing
@@ -102,23 +110,23 @@ Backend (from `backend/`, from README + Dockerfile):
 - [ ] No path writes/logs/stores image data
 - [ ] No secret in frontend, logs, responses or commits; `.env` still ignored
 - [ ] Backend validates type + size for any upload path touched
-- [ ] Errors to client are generic (no traces, keys, raw OpenAI text)
-- [ ] Tests or manual checklist run, including rejected cases; results reported
-- [ ] `npm run lint` and `npm run build` pass (frontend changes)
-- [ ] Backend starts with `uvicorn main:app --reload --port 8000` (backend changes)
+- [ ] Errors to client are generic (no traces, keys, raw OpenAI text); no fake results
+- [ ] Backend: `python -m pytest` passes, with rejected cases tested
+- [ ] Frontend: lint 0 errors, `tsc --noEmit` and `npm run build` pass, manual checklist run
 - [ ] CLAUDE.md updated if a rule changed
 
 ## 8. Open questions
-1. `route.ts` is a POST route handler but `next.config.ts` uses `output: 'export'`; the scan page bypasses it and
-   calls the backend directly. Is `/api/analyze` dead code? Does `npm run build` even succeed with it?
-2. Both the scan page and `route.ts` silently return **random demo results** when the backend fails.
-   Intended for production, or should users see a real error?
-3. Backend CORS is `allow_origins=["*"]` ("Restrict in production"). What is the production frontend origin?
-4. Where is the backend deployed (Dockerfile port 8080 hints Cloud Run)? How is `OPENAI_API_KEY` set there?
-5. OpenAI receives the image. Is OpenAI's data retention acceptable under the "never stored" claim in the UI?
-6. `ChatPanel.tsx` renders AI text with `dangerouslySetInnerHTML`, and the greeting interpolates `zone`, which
-   comes unvalidated from `?zone=` in the URL → possible XSS. Fix wanted?
-7. Is a test framework wanted (e.g. pytest + FastAPI TestClient; Vitest/Playwright for frontend)?
+1. `route.ts` vs `output: 'export'`: build passes but the route is silently dropped from `out/`. Options:
+   (a) delete `route.ts` (scan page already calls the backend directly); (b) keep it as a dev-only proxy;
+   (c) drop `output: 'export'`, host Next on a server (Cloud Run / Firebase App Hosting) and route the scan page
+   through `/api/analyze` so the backend URL stays private and CORS can be locked down. Undecided.
+2. `/results` with no params still shows default score 72 / confidence 0.91 (`results/page.tsx`), i.e. a result
+   no analysis produced. `?score=`/`?confidence=` are not validated (can be NaN). Fix?
+3. `Findings.tsx` shows static zone-based text, not the backend's `findings`/`summary` (never passed along). Intended?
+4. Backend CORS is `allow_origins=["*"]` ("Restrict in production"). What is the production frontend origin?
+5. Where is the backend deployed (Dockerfile port 8080 hints Cloud Run)? How is `OPENAI_API_KEY` set there?
+6. OpenAI receives the image. Is OpenAI's data retention acceptable under the "never stored" claim in the UI?
+7. Frontend test framework wanted (e.g. Vitest + Testing Library, or Playwright) to replace the manual checklist?
 8. README says `cd baldguard-ai` and mentions `.env.local`; neither exists. No `.env.example` either. Add one?
 9. `requirements.txt` is unpinned; `numpy` is listed but unused. Pin/remove?
 10. `14.02.2026_16.08.41_REC.mp4` (5.6 MB) sits at repo root. Keep in repo?

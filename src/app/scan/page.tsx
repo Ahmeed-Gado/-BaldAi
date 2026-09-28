@@ -14,6 +14,32 @@ const STATUS = [
     "Finalizing report…",
 ];
 
+const ZONES = ["Green", "Yellow", "Red"] as const;
+const GENERIC_ERROR = "Analysis failed, please try again.";
+
+type AnalysisResult = {
+    score: number;
+    zone: (typeof ZONES)[number];
+    confidence: number;
+};
+
+function isAnalysisResult(data: unknown): data is AnalysisResult {
+    if (typeof data !== "object" || data === null) return false;
+    const d = data as Record<string, unknown>;
+    return (
+        typeof d.score === "number" && d.score >= 0 && d.score <= 100 &&
+        typeof d.confidence === "number" && d.confidence >= 0 && d.confidence <= 1 &&
+        ZONES.includes(d.zone as AnalysisResult["zone"])
+    );
+}
+
+// Fixed client-side messages: server error text is never rendered
+function errorMessageForStatus(status: number): string {
+    if (status === 413) return "Image must be under 10MB.";
+    if (status === 400 || status === 415) return "Please upload a valid JPG or PNG image.";
+    return GENERIC_ERROR;
+}
+
 export default function ScanPage() {
     const router = useRouter();
     const [file, setFile] = useState<File | null>(null);
@@ -30,20 +56,15 @@ export default function ScanPage() {
         return STATUS[idx];
     }, [progress]);
 
-    // Create preview URL from file
+    // Release the in-memory preview when it is replaced or the page unmounts
     useEffect(() => {
-        if (!file) return;
-        const url = URL.createObjectURL(file);
-        setPreviewUrl(url);
-        return () => URL.revokeObjectURL(url);
-    }, [file]);
+        if (!previewUrl) return;
+        return () => URL.revokeObjectURL(previewUrl);
+    }, [previewUrl]);
 
     // Progress animation
     useEffect(() => {
         if (!scanning) return;
-
-        setProgress(0);
-        setError(null);
 
         const t = setInterval(() => {
             setProgress((p) => {
@@ -59,6 +80,12 @@ export default function ScanPage() {
     useEffect(() => {
         if (!scanning || progress < 100) return;
 
+        function failScan(message: string) {
+            setScanning(false);
+            setProgress(0);
+            setError(message);
+        }
+
         async function runAnalysis() {
             try {
                 const fd = new FormData();
@@ -73,27 +100,41 @@ export default function ScanPage() {
                 });
 
                 if (!res.ok) {
-                    throw new Error("AI analysis failed");
+                    failScan(errorMessageForStatus(res.status));
+                    return;
                 }
 
-                const data = await res.json();
-                router.push(
-                    `/results?score=${data.score}&zone=${data.zone}&confidence=${data.confidence}`
-                );
-            } catch {
-                // Fallback: Generate randomized demo results if backend is unavailable
-                const score = 55 + Math.floor(Math.random() * 35); // 55-90
-                const zone = score >= 80 ? "Green" : score >= 65 ? "Yellow" : "Red";
-                const confidence = +(0.88 + Math.random() * 0.08).toFixed(2);
+                const data: unknown = await res.json();
+                if (!isAnalysisResult(data)) {
+                    failScan(GENERIC_ERROR);
+                    return;
+                }
 
-                router.push(
-                    `/results?score=${score}&zone=${zone}&confidence=${confidence}`
-                );
+                const params = new URLSearchParams({
+                    score: String(data.score),
+                    zone: data.zone,
+                    confidence: String(data.confidence),
+                });
+                router.push(`/results?${params.toString()}`);
+            } catch {
+                // Backend unreachable: never show a result we did not get
+                failScan(GENERIC_ERROR);
             }
         }
 
         runAnalysis();
     }, [progress, scanning, router, file]);
+
+    function handlePick(f: File) {
+        setFile(f);
+        setPreviewUrl(URL.createObjectURL(f));
+    }
+
+    function startScan() {
+        setProgress(0);
+        setError(null);
+        setScanning(true);
+    }
 
     function handleClear() {
         setFile(null);
@@ -128,7 +169,7 @@ export default function ScanPage() {
                             <UploadCard
                                 file={file}
                                 previewUrl={previewUrl}
-                                onPick={(f) => setFile(f)}
+                                onPick={handlePick}
                                 onClear={handleClear}
                             />
                         </div>
@@ -191,19 +232,22 @@ export default function ScanPage() {
                                     </p>
 
                                     {error && (
-                                        <div className="mb-4 p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-300 text-sm">
+                                        <div
+                                            role="alert"
+                                            className="mb-4 p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-300 text-sm"
+                                        >
                                             {error}
                                         </div>
                                     )}
 
                                     <button
-                                        onClick={() => setScanning(true)}
+                                        onClick={startScan}
                                         className="w-full btn-primary animate-glowPulse text-lg py-5"
                                     >
                                         <span className="material-symbols-outlined mr-2 text-[20px]">
-                                            neurology
+                                            {error ? "refresh" : "neurology"}
                                         </span>
-                                        Start AI Scan
+                                        {error ? "Try again" : "Start AI Scan"}
                                     </button>
 
                                     <button

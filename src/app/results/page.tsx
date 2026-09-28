@@ -10,11 +10,19 @@ import ChatPanel from "@/components/ChatPanel";
 
 type Zone = "Green" | "Yellow" | "Red";
 
+const ZONES: readonly Zone[] = ["Green", "Yellow", "Red"];
+const DEFAULT_ZONE: Zone = "Yellow";
+
+// ?zone= is user-controlled: only allowlisted values get through
+function parseZone(value: string | null): Zone {
+    return ZONES.includes(value as Zone) ? (value as Zone) : DEFAULT_ZONE;
+}
+
 function ResultsContent() {
     const sp = useSearchParams();
 
     const score = Number(sp.get("score") ?? 72);
-    const zone = (sp.get("zone") ?? "Yellow") as Zone;
+    const zone = parseZone(sp.get("zone"));
     const confidence = Number(sp.get("confidence") ?? 0.91);
 
     return (

@@ -44,33 +44,26 @@ export async function POST(req: Request) {
             });
 
             if (!backendRes.ok) {
-                throw new Error(`Backend returned ${backendRes.status}`);
+                // Pass client errors (4xx) through; anything else is a gateway failure
+                const status = backendRes.status < 500 ? backendRes.status : 502;
+                return NextResponse.json(
+                    { error: "Analysis failed, please try again" },
+                    { status }
+                );
             }
 
             const result = await backendRes.json();
             return NextResponse.json(result);
-        } catch {
-            // If backend is unavailable, return demo results
-            // This ensures the UI always works for portfolio demonstrations
-            console.warn(
-                "AI backend unavailable, returning demo results. Set AI_BACKEND_URL to connect a real backend."
+        } catch (err: unknown) {
+            // Backend unreachable: never return a result we did not get
+            console.error(
+                "AI backend request failed:",
+                err instanceof Error ? err.name : "unknown"
             );
-
-            const demoScore = 60 + Math.floor(Math.random() * 25);
-            const zone =
-                demoScore >= 80 ? "Green" : demoScore >= 65 ? "Yellow" : "Red";
-
-            return NextResponse.json({
-                score: demoScore,
-                zone,
-                confidence: +(0.85 + Math.random() * 0.12).toFixed(2),
-                summary: "AI-detected follicle density pattern analysis",
-                findings: [
-                    "Crown density estimate completed",
-                    "Scalp visibility analysis performed",
-                    "Pattern consistency check passed",
-                ],
-            });
+            return NextResponse.json(
+                { error: "Analysis failed, please try again" },
+                { status: 502 }
+            );
         }
     } catch (err: unknown) {
         console.error("Analyze API error:", err);
