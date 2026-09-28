@@ -15,26 +15,22 @@
 - **Image Upload** — Client-side validation, drag & drop, preview with clear guidance
 - **Cinematic AI Scan** — Scanline animation, shimmer effects, corner markers, progress phases
 - **Results Dashboard** — Conic-gradient score gauge, zone-based glow, key findings list
-- **AI Chat Assistant** — Context-aware responses based on analysis results, suggestion chips
+- **Hair Health Assistant (demo)** — Scripted guidance tailored to your result zone, suggestion chips
 - **Privacy-First** — Images processed in memory, never stored, no sign-up required
 - **Responsive** — Beautiful on desktop and mobile
 
 ## 🏗️ Architecture
 
 ```
-[Browser]
+[Browser]  (static Next.js export on Firebase Hosting)
    │
-   │  POST image (multipart/form-data)
-   ▼
-[Next.js API Route]  /api/analyze
-   │
-   │  Forward to AI backend
+   │  POST image (multipart/form-data) → NEXT_PUBLIC_AI_BACKEND_URL
    ▼
 [FastAPI Backend]  /analyze
    │
-   │  PyTorch / CNN inference
+   │  Validate (JPEG/PNG, ≤ 10 MB) → OpenAI GPT-4o-mini vision (in memory, never stored)
    ▼
-[JSON Result]  → score, zone, confidence, findings
+[JSON Result]  → score, zone, confidence, summary, findings
 ```
 
 ## 🚀 Quick Start
@@ -42,13 +38,20 @@
 ### Frontend (Next.js)
 
 ```bash
-cd baldguard-ai
+git clone https://github.com/Ahmeed-Gado/-BaldAi.git
+cd ./-BaldAi
 npm install
 npm run dev
-https://early-baldness-detector.web.app/
 ```
 
-### Backend (FastAPI) — Optional
+Live site: https://early-baldness-detector.web.app/
+
+The frontend calls `NEXT_PUBLIC_AI_BACKEND_URL` (default `http://localhost:8000/analyze`).
+To point it elsewhere, create a gitignored `.env.local` in the repo root with that variable.
+
+### Backend (FastAPI) — Required
+
+Create `backend/.env` with `OPENAI_API_KEY=<your key>` (gitignored — never commit it), then:
 
 ```bash
 cd backend
@@ -56,20 +59,30 @@ pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
-> **Note:** The frontend works without the backend — it falls back to demo results automatically.
+> **Note:** Without a running backend the scan shows an error with a "Try again" button — no results are shown
+> that the analysis did not produce.
+
+### Backend tests
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+Tests use a fake OpenAI client and never call the real API.
 
 ## 📁 Project Structure
 
 ```
-baldguard-ai/
+-BaldAi/
 ├── src/
 │   ├── app/
 │   │   ├── layout.tsx          # Root layout + fonts + SEO
 │   │   ├── globals.css         # Design system (animations, glass, reveals)
 │   │   ├── page.tsx            # Landing page
-│   │   ├── scan/page.tsx       # Upload + scan flow
-│   │   ├── results/page.tsx    # Dashboard + AI chat
-│   │   └── api/analyze/route.ts # API proxy → FastAPI backend
+│   │   ├── scan/page.tsx       # Upload + scan flow (calls the backend directly)
+│   │   └── results/page.tsx    # Dashboard + demo chat
 │   └── components/
 │       ├── Header.tsx          # Fixed glass header + nav
 │       ├── Hero.tsx            # Animated hero section
@@ -83,13 +96,16 @@ baldguard-ai/
 │       ├── ScanAnimation.tsx   # Cinematic scan animation
 │       ├── ScoreGauge.tsx      # Conic score gauge
 │       ├── Findings.tsx        # Key findings list
-│       ├── ChatPanel.tsx       # AI chat assistant
+│       ├── ChatPanel.tsx       # Scripted demo chat
 │       └── useRevealOnScroll.ts # Scroll reveal hook
-├── backend/
-│   ├── main.py                 # FastAPI server
-│   ├── model.py                # AI model (placeholder)
-│   └── requirements.txt       # Python dependencies
-└── .env.local                 # Backend URL config
+└── backend/
+    ├── main.py                 # FastAPI server + upload validation
+    ├── model.py                # OpenAI GPT-4o-mini vision analysis
+    ├── requirements.txt        # Python dependencies
+    ├── requirements-dev.txt    # + pytest, httpx
+    ├── pytest.ini              # Test config
+    ├── tests/                  # pytest suite
+    └── Dockerfile              # Container (uvicorn on port 8080)
 ```
 
 ## 🎨 Design System
@@ -107,7 +123,9 @@ baldguard-ai/
 
 ## 🔌 Connecting Real AI
 
-Replace `backend/model.py` with your real inference:
+`backend/model.py` currently calls OpenAI GPT-4o-mini. To use your own model instead, replace
+`analyze_hair` — keep the same return shape, and raise `AnalysisError` on failure so users get a
+generic error instead of a made-up result:
 
 ```python
 import torch
@@ -121,7 +139,7 @@ def analyze_hair(img):
     with torch.no_grad():
         output = model(tensor)
     # Post-process...
-    return {"score": ..., "zone": ..., "confidence": ...}
+    return {"score": ..., "zone": ..., "confidence": ..., "summary": ..., "findings": [...]}
 ```
 
 Compatible with:

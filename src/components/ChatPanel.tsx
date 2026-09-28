@@ -3,14 +3,43 @@
 import { useMemo, useRef, useState, useEffect } from "react";
 
 type Msg = { role: "user" | "ai"; text: string };
+type Zone = "Green" | "Yellow" | "Red";
+
+const ZONES: readonly Zone[] = ["Green", "Yellow", "Red"];
+
+// Renders **bold** and _italic_ as React elements, so text is always escaped
+function renderInline(line: string): React.ReactNode[] {
+    return line
+        .split(/(\*\*.*?\*\*|_.*?_)/g)
+        .filter(Boolean)
+        .map((part, j) => {
+            if (part.length >= 4 && part.startsWith("**") && part.endsWith("**")) {
+                return (
+                    <strong key={j} className="text-white font-semibold">
+                        {part.slice(2, -2)}
+                    </strong>
+                );
+            }
+            if (part.length >= 2 && part.startsWith("_") && part.endsWith("_")) {
+                return (
+                    <em key={j} className="text-slate-500 text-xs">
+                        {part.slice(1, -1)}
+                    </em>
+                );
+            }
+            return part;
+        });
+}
 
 export default function ChatPanel({
-    zone,
+    zone: zoneProp,
     score,
 }: {
-    zone: "Green" | "Yellow" | "Red";
+    zone: Zone;
     score: number;
 }) {
+    // Defense in depth: never trust the zone value, even though callers parse it
+    const zone: Zone = ZONES.includes(zoneProp) ? zoneProp : "Yellow";
     const scrollRef = useRef<HTMLDivElement>(null);
 
     const [messages, setMessages] = useState<Msg[]>([
@@ -100,24 +129,11 @@ export default function ChatPanel({
     // Simple markdown-like rendering
     function renderText(text: string) {
         return text.split("\n").map((line, i) => {
-            // Bold
-            const formatted = line.replace(
-                /\*\*(.*?)\*\*/g,
-                '<strong class="text-white font-semibold">$1</strong>'
-            );
-            // Italic
-            const formatted2 = formatted.replace(
-                /_(.*?)_/g,
-                '<em class="text-slate-500 text-xs">$1</em>'
-            );
-
             if (line.trim() === "") return <br key={i} />;
             return (
-                <span
-                    key={i}
-                    dangerouslySetInnerHTML={{ __html: formatted2 }}
-                    className="block"
-                />
+                <span key={i} className="block">
+                    {renderInline(line)}
+                </span>
             );
         });
     }
