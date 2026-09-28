@@ -124,10 +124,8 @@ Backend (from `backend/`):
 4. Where is the backend deployed (Dockerfile port 8080 hints Cloud Run)? How is `OPENAI_API_KEY` set there?
 5. OpenAI receives the image. Is OpenAI's data retention acceptable under the "never stored" claim in the UI?
 6. Frontend test framework wanted (e.g. Vitest + Testing Library, or Playwright) to replace the manual checklist?
-7. README is stale: says `cd baldguard-ai`, mentions `.env.local` (neither exists) and still shows the removed
-   `/api/analyze` route in its architecture diagram and file tree. No `.env.example` either. Update README / add one?
-8. `requirements.txt` is unpinned; `numpy` is listed but unused. Pin/remove?
-9. `14.02.2026_16.08.41_REC.mp4` (5.6 MB) sits at repo root. Keep in repo?
-10. Deploy command for Firebase Hosting is not scripted (no `firebase-tools` in deps). Confirm the deploy steps.
-11. Git history (5 commits) has no `.env` file and no `sk-...`/`OPENAI_API_KEY=` match (regex grep only).
+7. `requirements.txt` is unpinned; `numpy` is listed but unused. Pin/remove?
+8. `14.02.2026_16.08.41_REC.mp4` (5.6 MB) sits at repo root. Keep in repo?
+9. Deploy command for Firebase Hosting is not scripted (no `firebase-tools` in deps). Confirm the deploy steps.
+10. Git history (5 commits) has no `.env` file and no `sk-...`/`OPENAI_API_KEY=` match (regex grep only).
     Want a proper secret scanner (e.g. gitleaks) added?
