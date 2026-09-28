@@ -12,8 +12,8 @@ Results page shows a gauge, findings and a scripted (non-AI) "Demo Chat". Inform
   `next.config.ts` sets `output: 'export'` (static site into `out/`), deployed to Firebase Hosting
   (`firebase.json` → `out`, project `early-baldness-detector` in `.firebaserc`).
   - `src/app/page.tsx` landing; `src/app/scan/page.tsx` upload + scan; `src/app/results/page.tsx` results
-  - `src/app/api/analyze/route.ts` Next API proxy. Builds, but is **not** in `out/`, so it does not exist on
-    Firebase Hosting; only runs under `npm run dev`/`npm run start`. Nothing calls it (see Open questions).
+  - No Next API routes: `output: 'export'` silently drops them from `out/`, so they never reach Firebase
+    Hosting. Don't add `src/app/api/*`; the frontend calls the backend directly.
   - `src/components/*` UI; `src/app/globals.css` design tokens/animations
 - **Backend** (`backend/`): FastAPI + Pillow + `openai` + `python-dotenv`. `main.py` (routes, upload validation),
   `model.py` (`analyze_hair(img)` → OpenAI call, raises `AnalysisError`), `requirements.txt` (unpinned),
@@ -26,8 +26,7 @@ Results page shows a gauge, findings and a scripted (non-AI) "Demo Chat". Inform
     413 (> 10 MB), 415 (wrong type), 422 (no `image` field), 502 (OpenAI failed / bad reply), 503 (no API key).
   - On 200 with a valid shape, scan page navigates to `/results?score=&zone=&confidence=` (never image data).
     On any failure it shows an error with "Try again" and does not navigate.
-  - Env vars: `OPENAI_API_KEY` (backend, via `backend/.env`), `NEXT_PUBLIC_AI_BACKEND_URL` (frontend, public),
-    `AI_BACKEND_URL` (used only by `route.ts`).
+  - Env vars: `OPENAI_API_KEY` (backend, via `backend/.env`), `NEXT_PUBLIC_AI_BACKEND_URL` (frontend, public).
 
 ## 3. Commands
 Frontend (from repo root, from `package.json`):
@@ -35,6 +34,8 @@ Frontend (from repo root, from `package.json`):
 - Dev: `npm run dev` · Build: `npm run build` (static export → `out/`) · Start: `npm run start`
 - Lint: `npm run lint` (ESLint 9, `eslint-config-next`). Must have 0 errors; 7 `<img>`/font warnings pre-exist.
 - Typecheck: `npx tsc --noEmit`
+- If build fails with "Cannot find module" in `.next/dev/types/*`, the gitignored `.next/` cache is stale
+  (e.g. after deleting a route): delete `.next/` and rebuild.
 - Test: **no frontend test framework.** Use the manual checklist in Section 5.
 
 Backend (from `backend/`):
@@ -100,7 +101,7 @@ Backend (from `backend/`):
 - Client components start with `"use client";`. Don't call setState synchronously in effects (lint error).
 - Styling: Tailwind utility classes + custom classes from `globals.css` (`glass`, `btn-primary`, `btn-glass`,
   `animate-*`). Icons: Material Symbols (`<span className="material-symbols-outlined">`).
-- Formatting: double quotes, semicolons. Indent is mixed (4 spaces in `src/app/scan`, `results`, `api`,
+- Formatting: double quotes, semicolons. Indent is mixed (4 spaces in `src/app/scan`, `results`,
   most components; 2 spaces in `layout.tsx`, `page.tsx`). Match the file you edit. No Prettier config.
 - Python: snake_case, module docstrings, type hints on functions, `logger = logging.getLogger(__name__)`.
 
@@ -116,20 +117,17 @@ Backend (from `backend/`):
 - [ ] CLAUDE.md updated if a rule changed
 
 ## 8. Open questions
-1. `route.ts` vs `output: 'export'`: build passes but the route is silently dropped from `out/`. Options:
-   (a) delete `route.ts` (scan page already calls the backend directly); (b) keep it as a dev-only proxy;
-   (c) drop `output: 'export'`, host Next on a server (Cloud Run / Firebase App Hosting) and route the scan page
-   through `/api/analyze` so the backend URL stays private and CORS can be locked down. Undecided.
-2. `/results` with no params still shows default score 72 / confidence 0.91 (`results/page.tsx`), i.e. a result
+1. `/results` with no params still shows default score 72 / confidence 0.91 (`results/page.tsx`), i.e. a result
    no analysis produced. `?score=`/`?confidence=` are not validated (can be NaN). Fix?
-3. `Findings.tsx` shows static zone-based text, not the backend's `findings`/`summary` (never passed along). Intended?
-4. Backend CORS is `allow_origins=["*"]` ("Restrict in production"). What is the production frontend origin?
-5. Where is the backend deployed (Dockerfile port 8080 hints Cloud Run)? How is `OPENAI_API_KEY` set there?
-6. OpenAI receives the image. Is OpenAI's data retention acceptable under the "never stored" claim in the UI?
-7. Frontend test framework wanted (e.g. Vitest + Testing Library, or Playwright) to replace the manual checklist?
-8. README says `cd baldguard-ai` and mentions `.env.local`; neither exists. No `.env.example` either. Add one?
-9. `requirements.txt` is unpinned; `numpy` is listed but unused. Pin/remove?
-10. `14.02.2026_16.08.41_REC.mp4` (5.6 MB) sits at repo root. Keep in repo?
-11. Deploy command for Firebase Hosting is not scripted (no `firebase-tools` in deps). Confirm the deploy steps.
-12. Git history (5 commits) has no `.env` file and no `sk-...`/`OPENAI_API_KEY=` match (regex grep only).
+2. `Findings.tsx` shows static zone-based text, not the backend's `findings`/`summary` (never passed along). Intended?
+3. Backend CORS is `allow_origins=["*"]` ("Restrict in production"). What is the production frontend origin?
+4. Where is the backend deployed (Dockerfile port 8080 hints Cloud Run)? How is `OPENAI_API_KEY` set there?
+5. OpenAI receives the image. Is OpenAI's data retention acceptable under the "never stored" claim in the UI?
+6. Frontend test framework wanted (e.g. Vitest + Testing Library, or Playwright) to replace the manual checklist?
+7. README is stale: says `cd baldguard-ai`, mentions `.env.local` (neither exists) and still shows the removed
+   `/api/analyze` route in its architecture diagram and file tree. No `.env.example` either. Update README / add one?
+8. `requirements.txt` is unpinned; `numpy` is listed but unused. Pin/remove?
+9. `14.02.2026_16.08.41_REC.mp4` (5.6 MB) sits at repo root. Keep in repo?
+10. Deploy command for Firebase Hosting is not scripted (no `firebase-tools` in deps). Confirm the deploy steps.
+11. Git history (5 commits) has no `.env` file and no `sk-...`/`OPENAI_API_KEY=` match (regex grep only).
     Want a proper secret scanner (e.g. gitleaks) added?
